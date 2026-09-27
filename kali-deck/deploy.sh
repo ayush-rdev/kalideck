@@ -29,7 +29,11 @@ UNIT_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 TEMPLATE="${REPO}/systemd/${SERVICE_NAME}.service.in"
 
 # ---------------------------------------------------------------- identity ---
-TARGET_USER="${DECK_USER:-${SUDO_USER:-server}}"
+TARGET_USER="${DECK_USER:-${SUDO_USER:-}}"
+if [[ -z "$TARGET_USER" ]]; then
+  echo "cannot determine the owning user - pass DECK_USER=<name>" >&2
+  exit 1
+fi
 if ! id "$TARGET_USER" >/dev/null 2>&1; then
   echo "unknown user: $TARGET_USER (override with DECK_USER=...)" >&2
   exit 1

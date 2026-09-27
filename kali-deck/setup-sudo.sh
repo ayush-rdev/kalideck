@@ -15,7 +15,11 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
-TARGET_USER="${SUDO_USER:-${DECK_USER:-server}}"
+TARGET_USER="${SUDO_USER:-${DECK_USER:-}}"
+if [[ -z "$TARGET_USER" ]]; then
+  echo "cannot determine the target user - pass DECK_USER=<name>" >&2
+  exit 1
+fi
 if ! id "$TARGET_USER" >/dev/null 2>&1; then
   echo "unknown user: $TARGET_USER" >&2
   exit 1
