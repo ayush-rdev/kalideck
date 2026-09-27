@@ -46,7 +46,8 @@ services:
     restart: unless-stopped
     shm_size: "64m"
     ports:
-      - "5800:5800"
+      # loopback only: reach it via an SSH tunnel, Tailscale Serve, or the deck host
+      - "127.0.0.1:5800:5800"
 
   # Web terminal for the Homarr iframe widget: serves kali-tui over HTTP on
   # 7681 (host network) with a fixed-size tmux session running as `hacker`.
