@@ -1,195 +1,122 @@
-# Requirements & Setup Guide
+# Requirements
 
-Everything needed to run **Kali Deck** (web console) + **Kali Lab** (Kali
-toolbox container) on a fresh machine. `setup.sh` at the repo root automates
-all of this — this file documents *what* it installs and *why*, plus the
-manual equivalent of every step.
+What a machine needs to run Kali Deck, what `setup.sh` does about it, and
+the manual equivalent of every step. The VPN/Tor layers and their one-time
+configuration are covered at the end.
 
----
+## Host requirements
 
-## 1. Host requirements
-
-| Requirement | Minimum | Why | Auto-installed by `setup.sh` |
+| Requirement | Minimum | Notes | Auto-installed |
 |---|---|---|---|
-| OS | Linux (Debian/Ubuntu/Kali tested) | systemd units, bash scripts, apt automation | — |
-| **Docker Engine** | 20.10+ with **compose** plugin | runs `kali-lab` + `kali-ttyd`; deck talks to the Docker API | ✅ (Docker Engine + compose plugin from docker.com repo) |
-| **Node.js** | **≥ 20** (server runs on v22) | Express backend, Vite build for the React UI | ✅ (Node 20 LTS from nodesource) |
-| npm | ships with Node | installs `kali-deck` JS dependencies | ✅ |
-| **Python 3** | ≥ 3.11 | `kalitools.py` installer + `kali-tui` run *inside* the container (Kali base ships it) | via container base image |
-| curl / git / gnupg | any recent | fetched during setup; used by container builds | ✅ |
-| Docker group access | — | the deck needs the Docker **unix socket** | ✅ (`usermod -aG docker`) |
-| Tailscale *(optional)* | any | publishes the deck over HTTPS on your tailnet | ❌ manual: `sudo tailscale up` |
-| **WireGuard tools** *(optional)* | `wg-quick` | Privacy page tunnel up/down (e.g. ProtonVPN free wg configs) | ❌ manual |
-| **ProtonVPN CLI** *(optional)* | community `protonvpn-cli` (pipx) | Privacy page connect/disconnect (needs `protonvpn init` once) | ❌ manual |
-| **Tor Browser container** | `domistyle/tor-browser` | anonymous browser as a noVNC desktop on :5800 | ✅ (pulled by `setup.sh`) |
+| OS | Debian / Ubuntu / Kali | systemd + bash; other distros work but `setup.sh` only automates apt | — |
+| Docker Engine | 20.10+ with compose plugin | runs `kali-lab`, `kali-ttyd`, `tor-browser` | yes |
+| Node.js | 20+ | backend runtime and UI build | yes |
+| Python 3 | 3.11+ | only inside the container; the Kali base ships it | via base image |
+| Disk | ~5 GB | 15–20 GB with a pre-baked base image; named volumes grow with use | — |
+| RAM | 2 GB | the deck itself is a lightweight Node process | — |
+| Tailscale | optional | publishes the deck over HTTPS on your tailnet | no |
+| WireGuard | optional | Privacy page tunnel up/down | no |
+| ProtonVPN CLI | optional | community `protonvpn-cli` via pipx | no |
 
-> The deck itself has **no database** — state is `.env` + `.deck-state.json`.
+The deck has no database. Its state is `kali-deck/.env` and
+`kali-deck/.deck-state.json`.
 
-### Node dependencies (`kali-deck/package.json`)
+JS dependencies (`kali-deck/package.json`), installed by `npm install`:
+express 5, ws 8, react 19, `@xterm/xterm`; build tooling is vite 8 and
+tailwindcss 4. The Python tooling in `kali-lab` is stdlib-only.
 
-Installed automatically by `npm install` (setup + deploy scripts do this):
+## The privacy stack
 
-- runtime: `express` 5, `ws` 8, `react` 19, `react-dom` 19, `@xterm/xterm` + addons
-- build: `vite` 8, `@vitejs/plugin-react`, `tailwindcss` 4 (`@tailwindcss/vite`)
-- dev utility: `playwright` (UI smoke tests; optional, browsers not required)
+The Privacy page drives three independent layers. All are optional; the deck
+works without any of them.
 
-### Python dependencies (inside the container only)
+**WireGuard.** The deck reads interface names and up-state from
+`/sys/class/net` and toggles tunnels through `wg-quick`. Keys never leave the
+kernel. One-time setup: install `wireguard-tools`, put your provider's
+config at `/etc/wireguard/wg-<name>.conf`, then run
+`sudo kali-deck/setup-sudo.sh` so the buttons work without a password.
 
-`kalitools.py` and `kali-tui` are stdlib-only — no `pip install` needed. Tool
-installs inside the container use apt / pipx / go / pip / gem / cargo / git,
-all driven by `catalog.json`.
+**ProtonVPN.** The community `protonvpn-cli` drives OpenVPN. One-time setup:
+`pipx install protonvpn-cli && protonvpn init`. Independent of WireGuard —
+the page shows both, and both can be up at once.
 
-### Disk, RAM, network
+**Tor.** The `tor` daemon runs inside `kali-lab` (host networking, so its
+SOCKS port is `127.0.0.1:9050` on the host). The deck can start and stop it,
+wrap tool runs in `proxychains4`, and show your direct and Tor egress IPs.
+`tor` and `proxychains4` are baked into the image; nothing to configure. The
+Tor Browser container serves a noVNC desktop on `127.0.0.1:5800`.
 
-- **Disk:** ~5 GB for a slim build (`kalilinux/kali-rolling` base) or
-  **15–20 GB** if you have a pre-baked `kali-saved` image with the full
-  toolset. Named volumes (`kali-home`, `kali-root`, `kali-work`) grow with use.
-- **RAM:** 2 GB host minimum; the deck itself is a lightweight Node process.
-- **Network:** outbound internet for image build + tool installs; tool runs
-  can be routed through Tor or VPN from the Privacy page.
+The sudoers rules from `setup-sudo.sh` are two narrow, auditable entries.
+Revoke with `sudo rm /etc/sudoers.d/kali-deck /usr/local/sbin/kali-deck-wg`.
 
----
+## What setup.sh does
 
-## 2. The privacy stack (VPN + Tor)
-
-The deck's **Privacy page** drives three independent layers, all optional:
-
-| Layer | Component | What the deck does | What you must do once |
-|---|---|---|---|
-| **WireGuard tunnel** | `wg-quick` + your `.conf` files in `/etc/wireguard/` | shows interface name + up-state (reads `/sys/class/net`), up/down buttons | install `wireguard-tools`; put your VPN provider's config at `/etc/wireguard/wg-<name>.conf`; then `sudo kali-deck/setup-sudo.sh` |
-| **ProtonVPN CLI** | community `protonvpn-cli` (pipx) | connect fastest/country/random/tor/secure-core, disconnect | `pipx install protonvpn-cli && protonvpn init` |
-| **Tor** | `tor` daemon **inside `kali-lab`** (host network → 127.0.0.1:9050) + Tor Browser container | SOCKS status + start/stop, "route tool runs through Tor" toggle (wraps commands in `proxychains4`), public-IP checks for direct and Tor egress | nothing — `tor` and `proxychains4` are baked into the image by `setup.sh` |
-
-Notes:
-
-- The deck never reads or stores VPN keys/configs — WireGuard interfaces are
-  shown by name/state only; keys stay in the kernel.
-- If a sudoers rule is missing, the Privacy page says
-  "sudo needs a password" — run `sudo kali-deck/setup-sudo.sh` to grant the
-  two narrow rules (revocable with `sudo rm /etc/sudoers.d/kali-deck`).
-- Tor Browser desktop: `http://127.0.0.1:5800` (noVNC). Keep it loopback or
-  tailnet-only; don't port-forward it.
-- `protonvpn` (OpenVPN-based CLI) and your WireGuard tunnel are independent —
-  the Privacy page shows both, and it is possible to have both up at once.
-
----
-
-## 3. What `setup.sh` does (the automated path)
-
-| Step | Action | Idempotent? |
+| Step | Action | Idempotent |
 |---|---|---|
-| 1 | Installs Docker Engine + compose plugin (docker.com apt repo) if missing | ✅ skips if present |
-| 2 | Adds your user to the `docker` group so the deck can reach the socket | ✅ skips if usable |
-| 3 | Installs Node.js 20 if `node` is missing or < 20 (nodesource) | ✅ skips if present |
-| 4 | Builds `kali-toolbox:latest` from `kali-lab/Dockerfile` — auto-picks `kali-saved` as base when it exists locally, else `kalilinux/kali-rolling` | ✅ Docker layer cache |
-| 5 | `docker compose up -d` for `kali-lab` + `kali-ttyd` + `tor-browser` | ✅ reuses running containers |
-| 6 | `npm install` + `npm run build` in `kali-deck/` (production UI → `dist/`) | ✅ npm is incremental |
-| 7 | Installs and starts the systemd **user** service (`deploy-user.sh`), or the **system** service + Tailscale Serve with `sudo bash setup.sh --system` | ✅ re-runnable |
+| 1 | Install Docker Engine + compose plugin (docker.com apt repo) | skips if present |
+| 2 | Add your user to the `docker` group | skips if the socket already works |
+| 3 | Install Node.js 20 (nodesource) if missing or older | skips if present |
+| 4 | Build `kali-toolbox:latest`; uses local `kali-saved` as base when available, else `kalilinux/kali-rolling` | Docker layer cache |
+| 5 | `docker compose up -d` for `kali-lab`, `kali-ttyd`, `tor-browser` | reuses running containers |
+| 6 | `npm install` + `npm run build` in `kali-deck/` | incremental |
+| 7 | Start the systemd user service, or the system service + Tailscale Serve with `--system` | re-runnable |
 
-Skips/flags:
+Flags: `--deck-only` (steps 1–3 if missing, then 6–7), `--system` (full
+setup + system service + Tailscale), `--help`.
 
-```bash
-bash setup.sh --deck-only   # steps 1-3 only if missing, then 6-7 (no image build)
-sudo bash setup.sh --system # full setup + system service + tailscale serve
-bash setup.sh --help
-```
+## Manual setup
 
----
-
-## 4. Manual setup (equivalent, step by step)
-
-### 4.1 Docker + lab stack
+Docker and the lab:
 
 ```bash
-# docker engine + compose (Debian/Ubuntu/Kali) - or your distro's equivalent
 curl -fsSL https://get.docker.com | sh
 sudo usermod -aG docker "$USER" && newgrp docker
 
-# build the toolbox image
 cd kali-lab
-docker build -t kali-toolbox:latest .          # add --build-arg KALI_BASE=kalilinux/kali-rolling on a fresh box
-
-# start the lab
+docker build -t kali-toolbox:latest .    # add --build-arg KALI_BASE=kalilinux/kali-rolling on a fresh box
 docker compose up -d
-docker exec -it -u hacker kali-lab /bin/zsh    # smoke test, then try: kali-tui
+docker exec -it -u hacker kali-lab /bin/zsh   # then run kali-tui
 ```
 
-`docker-compose.yml` needs a `kali-lab/.env` with `TTYD_USER` / `TTYD_PASSWORD`
-(its default is `changeme` — set real values before exposing :7681 anywhere).
+The compose file reads `TTYD_USER` / `TTYD_PASSWORD` from `kali-lab/.env`
+(default `changeme` — set real values before exposing :7681 anywhere).
 
-### 4.2 The deck
+The deck:
 
 ```bash
 cd kali-deck
 npm install
-npm run build                    # emits dist/, served by the backend
-npm start                        # http://127.0.0.1:8080
+npm run build          # emits dist/, served by the backend
+npm start              # http://127.0.0.1:8080
+
+# or as a service:
+./deploy-user.sh       # systemd user service, no sudo
+sudo ./deploy.sh       # system service + Tailscale Serve
 ```
 
-Or run it as a service:
+LAN exposure binds the login page to your network. Prefer Tailscale or an
+SSH tunnel; if you still want it, `sudo DECK_HOST=0.0.0.0 ./deploy.sh` and
+fence the port with ufw.
 
-```bash
-kali-deck/deploy-user.sh         # systemd user service, no sudo
-# or, with sudo + tailscale:
-sudo kali-deck/deploy.sh         # also publishes https://<machine>.<tailnet>.ts.net/
-```
-
-### 4.3 Optional: VPN controls from the UI
-
-```bash
-sudo kali-deck/setup-sudo.sh     # narrow sudoers rules: protonvpn + wg-quick wrapper
-# revoke any time:
-sudo rm /etc/sudoers.d/kali-deck /usr/local/sbin/kali-deck-wg
-```
-
-### 4.4 Optional: LAN exposure (think first)
-
-The default binds `127.0.0.1` only. LAN exposure puts a login page on your
-Wi-Fi — prefer Tailscale or an SSH tunnel. If you still want it:
-
-```bash
-sudo DECK_HOST=0.0.0.0 kali-deck/deploy.sh
-# and ideally fence it off:
-sudo ufw allow from 192.168.0.0/16 to any port 8080 proto tcp
-sudo ufw enable
-```
-
----
-
-## 5. Configuration reference
-
-All configuration is environment-driven (`.env` next to each component or
-process env); there is nothing else to edit.
+## Configuration
 
 | Variable | Where | Default | Purpose |
 |---|---|---|---|
-| `DECK_PASSWORD` | `kali-deck/.env` | generated on first run | login password for the deck |
+| `DECK_PASSWORD` | `kali-deck/.env` | generated on first run | login password |
 | `DECK_PORT` | `kali-deck/.env` | `8080` | backend listen port |
 | `DECK_HOST` | `kali-deck/.env` | `127.0.0.1` | bind address; `0.0.0.0` = LAN |
 | `KALI_CONTAINER` | `kali-deck/.env` | `kali-lab` | container the deck drives |
-| `KALI_BASE` | docker build arg | `kali-saved` → falls back to `kalilinux/kali-rolling` | base image for the toolbox |
+| `KALI_BASE` | docker build arg | `kali-saved` → `kalilinux/kali-rolling` | base image for the toolbox |
+| `KALITOOLS_SKIP_INSTALL` | docker build arg | `0` | `1` builds a base-only image without the tool bake |
 | `TTYD_USER` / `TTYD_PASSWORD` | `kali-lab/.env` | `server` / `changeme` | ttyd web-terminal credentials |
 
-Deck state file: `kali-deck/.deck-state.json` (currently just the
-Tor-routing toggle). Sessions live in memory — a service restart means
-logging in again.
+Sessions live in memory; a service restart means logging in again.
 
----
-
-## 6. Verify the installation
+## Verify
 
 ```bash
-# 1. lab container is up and tools are catalogued
-docker exec -it -u hacker kali-lab kali-tui --help   # or zsh, then kali-tui
-
-# 2. deck backend answers
-curl -s http://127.0.0.1:8080/api/health              # {"ok":true,...}
-
-# 3. service state (user or system path)
-systemctl --user status kali-deck                     # or: systemctl status kali-deck
-
-# 4. log in with the generated password
-grep DECK_PASSWORD kali-deck/.env                     # then open http://127.0.0.1:8080/
+docker exec -it -u hacker kali-lab kali-tui --help
+curl -s http://127.0.0.1:8080/api/health          # {"ok":true,...}
+systemctl --user status kali-deck                 # or: systemctl status kali-deck
+grep DECK_PASSWORD kali-deck/.env                 # then log in at :8080
 ```
-
-If the UI reports "UI not built yet", run `cd kali-deck && npm run build`.

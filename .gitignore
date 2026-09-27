@@ -5,6 +5,7 @@ kali-deck/dist/
 # Runtime state and secrets - never commit.
 kali-deck/.env
 kali-lab/.env
+kali-deck/.deck-state.json
 *.log
 
 # Python cruft from the lab tooling.

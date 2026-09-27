@@ -75,7 +75,7 @@ RUN set -eux; \
         > /etc/apt/sources.list.d/osquery.list; \
     curl -fsSL https://download.opensuse.org/repositories/security:/zeek/Debian_13/Release.key \
         | gpg --dearmor -o /etc/apt/trusted.gpg.d/security_zeek.gpg; \
-    echo "deb https://download.opensuse.org/repositories/security:/zeek/Debian_13/ " \
+    echo "deb https://download.opensuse.org/repositories/security:/zeek/Debian_13/ /" \
         > /etc/apt/sources.list.d/security_zeek.list; \
     apt-get update
 
@@ -109,7 +109,12 @@ RUN chmod 0755 kali-tui kalitools.py \
 # cost us the whole image. `kalitools verify` reports what did not land and
 # the TUI can retry any of it later. KALITOOLS_SKIP_INSTALL=1 skips this for
 # a fast base-only image.
-RUN python3 /opt/kalitools/kalitools.py install --all || true
+ARG KALITOOLS_SKIP_INSTALL=0
+RUN if [ "$KALITOOLS_SKIP_INSTALL" = "1" ]; then \
+      echo "KALITOOLS_SKIP_INSTALL=1 - skipping the tool bake"; \
+    else \
+      python3 /opt/kalitools/kalitools.py install --all || true; \
+    fi
 
 # --- 7. record coverage so it is visible on first login --------------------- #
 RUN python3 /opt/kalitools/kalitools.py status | tee /opt/kalitools/STATUS.txt; \
