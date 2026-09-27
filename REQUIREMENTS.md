@@ -19,8 +19,9 @@ manual equivalent of every step.
 | curl / git / gnupg | any recent | fetched during setup; used by container builds | ✅ |
 | Docker group access | — | the deck needs the Docker **unix socket** | ✅ (`usermod -aG docker`) |
 | Tailscale *(optional)* | any | publishes the deck over HTTPS on your tailnet | ❌ manual: `sudo tailscale up` |
-| ProtonVPN CLI *(optional)* | community `protonvpn-cli` via pipx | Privacy page connect/disconnect | ❌ optional feature |
-| WireGuard tools *(optional)* | `wg-quick` | Privacy page tunnel up/down | ❌ optional feature |
+| **WireGuard tools** *(optional)* | `wg-quick` | Privacy page tunnel up/down (e.g. ProtonVPN free wg configs) | ❌ manual |
+| **ProtonVPN CLI** *(optional)* | community `protonvpn-cli` (pipx) | Privacy page connect/disconnect (needs `protonvpn init` once) | ❌ manual |
+| **Tor Browser container** | `domistyle/tor-browser` | anonymous browser as a noVNC desktop on :5800 | ✅ (pulled by `setup.sh`) |
 
 > The deck itself has **no database** — state is `.env` + `.deck-state.json`.
 
@@ -49,7 +50,31 @@ all driven by `catalog.json`.
 
 ---
 
-## 2. What `setup.sh` does (the automated path)
+## 2. The privacy stack (VPN + Tor)
+
+The deck's **Privacy page** drives three independent layers, all optional:
+
+| Layer | Component | What the deck does | What you must do once |
+|---|---|---|---|
+| **WireGuard tunnel** | `wg-quick` + your `.conf` files in `/etc/wireguard/` | shows interface name + up-state (reads `/sys/class/net`), up/down buttons | install `wireguard-tools`; put your VPN provider's config at `/etc/wireguard/wg-<name>.conf`; then `sudo kali-deck/setup-sudo.sh` |
+| **ProtonVPN CLI** | community `protonvpn-cli` (pipx) | connect fastest/country/random/tor/secure-core, disconnect | `pipx install protonvpn-cli && protonvpn init` |
+| **Tor** | `tor` daemon **inside `kali-lab`** (host network → 127.0.0.1:9050) + Tor Browser container | SOCKS status + start/stop, "route tool runs through Tor" toggle (wraps commands in `proxychains4`), public-IP checks for direct and Tor egress | nothing — `tor` and `proxychains4` are baked into the image by `setup.sh` |
+
+Notes:
+
+- The deck never reads or stores VPN keys/configs — WireGuard interfaces are
+  shown by name/state only; keys stay in the kernel.
+- If a sudoers rule is missing, the Privacy page says
+  "sudo needs a password" — run `sudo kali-deck/setup-sudo.sh` to grant the
+  two narrow rules (revocable with `sudo rm /etc/sudoers.d/kali-deck`).
+- Tor Browser desktop: `http://127.0.0.1:5800` (noVNC). Keep it loopback or
+  tailnet-only; don't port-forward it.
+- `protonvpn` (OpenVPN-based CLI) and your WireGuard tunnel are independent —
+  the Privacy page shows both, and it is possible to have both up at once.
+
+---
+
+## 3. What `setup.sh` does (the automated path)
 
 | Step | Action | Idempotent? |
 |---|---|---|
@@ -57,7 +82,7 @@ all driven by `catalog.json`.
 | 2 | Adds your user to the `docker` group so the deck can reach the socket | ✅ skips if usable |
 | 3 | Installs Node.js 20 if `node` is missing or < 20 (nodesource) | ✅ skips if present |
 | 4 | Builds `kali-toolbox:latest` from `kali-lab/Dockerfile` — auto-picks `kali-saved` as base when it exists locally, else `kalilinux/kali-rolling` | ✅ Docker layer cache |
-| 5 | `docker compose up -d` for `kali-lab` + `kali-ttyd` | ✅ reuses running containers |
+| 5 | `docker compose up -d` for `kali-lab` + `kali-ttyd` + `tor-browser` | ✅ reuses running containers |
 | 6 | `npm install` + `npm run build` in `kali-deck/` (production UI → `dist/`) | ✅ npm is incremental |
 | 7 | Installs and starts the systemd **user** service (`deploy-user.sh`), or the **system** service + Tailscale Serve with `sudo bash setup.sh --system` | ✅ re-runnable |
 
@@ -71,9 +96,9 @@ bash setup.sh --help
 
 ---
 
-## 3. Manual setup (equivalent, step by step)
+## 4. Manual setup (equivalent, step by step)
 
-### 3.1 Docker + lab stack
+### 4.1 Docker + lab stack
 
 ```bash
 # docker engine + compose (Debian/Ubuntu/Kali) - or your distro's equivalent
@@ -92,7 +117,7 @@ docker exec -it -u hacker kali-lab /bin/zsh    # smoke test, then try: kali-tui
 `docker-compose.yml` needs a `kali-lab/.env` with `TTYD_USER` / `TTYD_PASSWORD`
 (its default is `changeme` — set real values before exposing :7681 anywhere).
 
-### 3.2 The deck
+### 4.2 The deck
 
 ```bash
 cd kali-deck
@@ -109,7 +134,7 @@ kali-deck/deploy-user.sh         # systemd user service, no sudo
 sudo kali-deck/deploy.sh         # also publishes https://<machine>.<tailnet>.ts.net/
 ```
 
-### 3.3 Optional: VPN controls from the UI
+### 4.3 Optional: VPN controls from the UI
 
 ```bash
 sudo kali-deck/setup-sudo.sh     # narrow sudoers rules: protonvpn + wg-quick wrapper
@@ -117,7 +142,7 @@ sudo kali-deck/setup-sudo.sh     # narrow sudoers rules: protonvpn + wg-quick wr
 sudo rm /etc/sudoers.d/kali-deck /usr/local/sbin/kali-deck-wg
 ```
 
-### 3.4 Optional: LAN exposure (think first)
+### 4.4 Optional: LAN exposure (think first)
 
 The default binds `127.0.0.1` only. LAN exposure puts a login page on your
 Wi-Fi — prefer Tailscale or an SSH tunnel. If you still want it:
@@ -131,7 +156,7 @@ sudo ufw enable
 
 ---
 
-## 4. Configuration reference
+## 5. Configuration reference
 
 All configuration is environment-driven (`.env` next to each component or
 process env); there is nothing else to edit.
@@ -151,7 +176,7 @@ logging in again.
 
 ---
 
-## 5. Verify the installation
+## 6. Verify the installation
 
 ```bash
 # 1. lab container is up and tools are catalogued

@@ -116,10 +116,11 @@ if [[ $DECK_ONLY -eq 0 ]]; then
   d image inspect kali-saved >/dev/null 2>&1 && base="kali-saved"
   d build --build-arg "KALI_BASE=$base" -t kali-toolbox:latest "$LAB_DIR"
 
-  say "starting the kali-lab stack (kali-lab + kali-ttyd)"
+  say "starting the kali-lab stack (kali-lab + kali-ttyd + tor-browser)"
   ( cd "$LAB_DIR" && d compose up -d )
   d start kali-lab >/dev/null 2>&1 || true
   info "verify:  docker exec -it -u hacker kali-lab /bin/zsh   (then run: kali-tui)"
+  info "tor browser desktop: http://127.0.0.1:5800 (noVNC)"
 fi
 
 # ------------------------------------------------------------- 3. the deck

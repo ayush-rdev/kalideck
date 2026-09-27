@@ -38,6 +38,16 @@ services:
     working_dir: /work
     command: ["sleep", "infinity"]
 
+  # Tor Browser as a desktop: noVNC in the browser on :5800 (dashboard link).
+  # Bridges network, so nothing here is exposed to the LAN beyond that port.
+  tor-browser:
+    image: domistyle/tor-browser:latest
+    container_name: tor-browser
+    restart: unless-stopped
+    shm_size: "64m"
+    ports:
+      - "5800:5800"
+
   # Web terminal for the Homarr iframe widget: serves kali-tui over HTTP on
   # 7681 (host network) with a fixed-size tmux session running as `hacker`.
   # Credentials come from .env (TTYD_USER / TTYD_PASSWORD) next to this file.

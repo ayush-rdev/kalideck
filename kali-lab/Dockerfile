@@ -60,6 +60,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
         unzip \
         xz-utils \
+        tor \
+        proxychains4 \
     && rm -rf /var/lib/apt/lists/*
 
 # --- 2. third-party apt repos for tools Kali does not package ------------- #
