@@ -1,0 +1,181 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #05070b;
+  --color-panel: #0b1017;
+  --color-panel2: #0f1620;
+  --color-line: #1a2431;
+  --color-line2: #263444;
+  --color-txt: #d7e0ea;
+  --color-dim: #7c8ca1;
+  --color-accent: #29e5b4;
+  --color-accent2: #38bdf8;
+  --color-warn: #f5b944;
+  --color-danger: #ff5d73;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  /* Mobile browsers resize their chrome as you scroll, so 100% is the WRONG
+     height - it overflows and pushes the bottom nav off-screen. dvh tracks the
+     real visible viewport. */
+  height: 100dvh;
+  overflow: hidden;
+}
+
+body {
+  /* stop iOS from inflating text in landscape */
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--color-ink);
+  color: var(--color-txt);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+
+/* thin scrollbars everywhere */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line2) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-line2);
+  border-radius: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* horizontal chip rows without ugly scrollbars */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* mono label style used for section headers */
+.label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-dim);
+}
+
+.card {
+  background: var(--color-panel);
+  border: 1px solid var(--color-line);
+  border-radius: 12px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 8px;
+  border: 1px solid var(--color-line2);
+  background: var(--color-panel2);
+  color: var(--color-txt);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.btn:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+.btn:active {
+  transform: translateY(1px);
+}
+.btn:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+.btn-primary {
+  background: color-mix(in srgb, var(--color-accent) 14%, var(--color-panel2));
+  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
+  color: var(--color-accent);
+}
+.btn-primary:hover {
+  background: color-mix(in srgb, var(--color-accent) 24%, var(--color-panel2));
+}
+.btn-danger {
+  border-color: color-mix(in srgb, var(--color-danger) 45%, transparent);
+  color: var(--color-danger);
+}
+.btn-danger:hover {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 12%, var(--color-panel2));
+}
+
+.input {
+  background: var(--color-ink);
+  border: 1px solid var(--color-line2);
+  border-radius: 8px;
+  color: var(--color-txt);
+  font-size: 13px;
+  padding: 7px 10px;
+  width: 100%;
+  outline: none;
+  transition: border-color 0.12s;
+}
+.input:focus {
+  border-color: var(--color-accent);
+}
+.input::placeholder {
+  color: color-mix(in srgb, var(--color-dim) 75%, transparent);
+}
+
+/* xterm sizing inside flex layouts */
+.xterm-host {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+.xterm-host .xterm {
+  padding: 6px 0 6px 8px;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.fade-in {
+  animation: fade-in 0.18s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

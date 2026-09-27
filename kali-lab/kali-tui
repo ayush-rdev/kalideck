@@ -1,0 +1,422 @@
+#!/usr/bin/env python3
+"""kali-tui - a curses front-end for the kali-lab tool catalog.
+
+Browse every catalogued tool, see what is installed, install the missing
+ones (with live output), read details, and launch a tool without leaving
+the UI.
+
+Keys
+  up/down, j/k   move            space   mark/unmark tool
+  left/right     change category  a       mark all visible
+  enter          details          u       unmark all
+  /              search all       i       install marked (or current)
+  esc            clear search     r       run current tool
+  tab            next category    v       refresh installed status
+  g/G            top / bottom     q       quit
+"""
+from __future__ import annotations
+
+import curses
+import os
+import queue
+import shutil
+import subprocess
+import sys
+import threading
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import kalitools  # noqa: E402
+
+C_TITLE, C_INST, C_MISS, C_SEL, C_MARK, C_LOG = 1, 2, 3, 4, 5, 6
+LEFT_W = 30
+
+
+class App:
+    def __init__(self, stdscr, catalog: dict):
+        self.scr = stdscr
+        self.cat = catalog
+        self.cats = catalog["categories"]
+        self.tools = catalog["tools"]
+        self.installed: dict[str, bool] = {}
+        self.marks: set[str] = set()
+        self.cat_idx = 0
+        self.cursor = 0
+        self.offset = 0
+        self.search = ""
+        self.searching = False
+        self.msg = "ready"
+        self.log: list[str] = []
+        self.busy = False
+        self.q: "queue.Queue[str | None]" = queue.Queue()
+        self.worker: threading.Thread | None = None
+        self.refresh_status()
+
+    # ---------------- data ----------------
+    def refresh_status(self) -> None:
+        for t in self.tools:
+            self.installed[t["id"]] = kalitools.is_installed(t)
+
+    @property
+    def cat_id(self) -> str:
+        return self.cats[self.cat_idx]["id"]
+
+    def visible(self) -> list[dict]:
+        if self.search:
+            needle = self.search.lower()
+            return [
+                t
+                for t in self.tools
+                if needle in t["id"].lower()
+                or needle in t["name"].lower()
+                or needle in t["desc"].lower()
+                or needle in t["cat"].lower()
+            ]
+        return [t for t in self.tools if t["cat"] == self.cat_id]
+
+    def current(self) -> dict | None:
+        vis = self.visible()
+        if not vis:
+            return None
+        self.cursor = max(0, min(self.cursor, len(vis) - 1))
+        return vis[self.cursor]
+
+    # ---------------- async install ----------------
+    def start_install(self, tools: list[dict]) -> None:
+        if self.busy or not tools:
+            return
+        self.busy = True
+        self.log = []
+        self.msg = f"installing {len(tools)} tool(s)..."
+
+        def work():
+            try:
+                for t in tools:
+                    if self.installed.get(t["id"]):
+                        self.q.put(f"[=] {t['name']} already installed")
+                        continue
+                    try:
+                        ok = kalitools.install(t, self.q.put)
+                    except Exception as exc:
+                        self.q.put(f"[X] {t['name']}: {exc}")
+                        ok = False
+                    self.installed[t["id"]] = bool(ok)
+            finally:
+                self.q.put(None)
+
+        self.worker = threading.Thread(target=work, daemon=True)
+        self.worker.start()
+
+    def pump(self) -> None:
+        """Drain worker output; returns when the worker signals done."""
+        done = False
+        while True:
+            try:
+                item = self.q.get_nowait()
+            except queue.Empty:
+                break
+            if item is None:
+                done = True
+                break
+            self.log.append(item)
+            self.log = self.log[-500:]
+        if done:
+            self.busy = False
+            self.marks.clear()
+            n = sum(1 for v in self.installed.values() if v)
+            self.msg = f"done - {n}/{len(self.tools)} tools installed"
+
+    # ---------------- drawing ----------------
+    def put(self, y: int, x: int, text: str, attr: int = 0) -> None:
+        """addstr that never hits the bottom-right cell and never raises."""
+        h, w = self.scr.getmaxyx()
+        if y < 0 or y >= h or x < 0 or x >= w:
+            return
+        text = text[: max(0, w - x - 1)]
+        if not text:
+            return
+        try:
+            self.scr.addstr(y, x, text, attr)
+        except curses.error:
+            pass
+
+    def draw(self) -> None:
+        self.scr.erase()
+        h, w = self.scr.getmaxyx()
+        if h < 10 or w < 60:
+            self.put(0, 0, "terminal too small - need at least 60x10")
+            self.scr.refresh()
+            return
+
+        title = " kali-lab toolbox "
+        n_inst = sum(1 for v in self.installed.values() if v)
+        head = f"{title:=^{w}}"
+        self.put(0, 0, head, curses.color_pair(C_TITLE) | curses.A_BOLD)
+        self.put(1, 1, f"{n_inst}/{len(self.tools)} installed  |  {len(self.marks)} marked")
+
+        log_h = 0
+        if self.busy or (self.log and self.msg.startswith("done")):
+            log_h = max(5, min(12, h // 3))
+        body_top = 2
+        body_h = h - body_top - log_h - 2
+
+        # left: categories
+        for i, c in enumerate(self.cats):
+            if body_top + i >= body_top + body_h:
+                break
+            n_total = sum(1 for t in self.tools if t["cat"] == c["id"])
+            n_ok = sum(
+                1 for t in self.tools if t["cat"] == c["id"] and self.installed.get(t["id"])
+            )
+            active = (not self.search) and i == self.cat_idx
+            label = f" {c['name'][:LEFT_W - 9]:<{LEFT_W - 9}} {n_ok:>2}/{n_total:<2}"
+            attr = curses.A_REVERSE if active else curses.A_NORMAL
+            self.put(body_top + i, 0, label, attr)
+
+        self.put(body_top, LEFT_W, "|" + "-" * (w - LEFT_W - 1))
+
+        # right: tools
+        vis = self.visible()
+        if self.cursor >= len(vis) and vis:
+            self.cursor = len(vis) - 1
+        if self.cursor < self.offset:
+            self.offset = self.cursor
+        if self.cursor >= self.offset + body_h:
+            self.offset = self.cursor - body_h + 1
+
+        for row, t in enumerate(vis[self.offset : self.offset + body_h]):
+            i = self.offset + row
+            y = body_top + row
+            mark = "*" if t["id"] in self.marks else " "
+            dot = "o" if self.installed.get(t["id"]) else "."
+            sel = i == self.cursor
+            name_w = 22
+            line = f"{mark}{dot} {t['name'][:name_w]:<{name_w}} {t['desc']}"
+            maxw = w - LEFT_W - 2
+            line = line[:maxw]
+            if sel:
+                attr = curses.color_pair(C_SEL) | curses.A_BOLD
+            elif t["id"] in self.marks:
+                attr = curses.color_pair(C_MARK)
+            elif self.installed.get(t["id"]):
+                attr = curses.color_pair(C_INST)
+            else:
+                attr = curses.color_pair(C_MISS)
+            self.put(y, LEFT_W + 1, line.ljust(maxw), attr)
+
+        # log pane
+        if log_h:
+            top = h - log_h - 2
+            self.put(top, 0, "-" * w)
+            for row, line in enumerate(self.log[-log_h + 1 :]):
+                self.put(top + 1 + row, 1, line, curses.color_pair(C_LOG))
+
+        # footer
+        self.put(h - 2, 0, f" {self.msg} ".ljust(w - 1), curses.A_REVERSE)
+        keys = " space mark | i install | r run | enter info | / search | v refresh | q quit "
+        self.put(h - 1, 0, keys.ljust(w - 1))
+        self.scr.refresh()
+
+    def prompt(self, label: str) -> str:
+        h, w = self.scr.getmaxyx()
+        buf = ""
+        curses.curs_set(1)
+        while True:
+            self.put(h - 2, 0, f" {label}{buf}".ljust(w - 1), curses.A_REVERSE)
+            self.scr.refresh()
+            ch = self.scr.getch()
+            if ch in (10, 13, curses.KEY_ENTER):
+                break
+            if ch == 27:
+                buf = ""
+                break
+            if ch in (curses.KEY_BACKSPACE, 127, 8):
+                buf = buf[:-1]
+            elif 32 <= ch < 127:
+                buf += chr(ch)
+        curses.curs_set(0)
+        return buf
+
+    def popup(self, title: str, lines: list[str]) -> None:
+        h, w = self.scr.getmaxyx()
+        bw = min(w - 4, max(len(x) for x in lines + [title]) + 4)
+        bh = len(lines) + 4
+        top = max(0, (h - bh) // 2)
+        left = max(0, (w - bw) // 2)
+        win = curses.newwin(bh, bw, top, left)
+        try:
+            win.box()
+            win.addstr(0, 2, f" {title} "[: bw - 4], curses.A_BOLD)
+            for i, line in enumerate(lines):
+                if 2 + i < bh - 1:
+                    win.addstr(2 + i, 2, line[: bw - 4])
+            win.addstr(bh - 1, 2, " press any key ")
+        except curses.error:
+            pass
+        win.refresh()
+        win.getch()
+        del win
+        self.scr.touchwin()
+
+    # ---------------- actions ----------------
+    def do_run(self, tool: dict) -> None:
+        binary = tool.get("bin")
+        exe = shutil.which(binary) if binary else None
+        if not exe:
+            self.msg = f"{tool['name']} is not installed"
+            return
+        args = self.prompt(f"{tool['name']} args> ")
+        target = [exe] + (args.split() if args.strip() else [])
+
+        curses.def_prog_mode()
+        curses.endwin()
+        try:
+            print(f"\n=== {tool['name']} ===\n")
+            subprocess.call(target, env={**os.environ, **kalitools.GLOBAL_ENV})
+            input("\n[enter to return to kali-tui]")
+        except Exception as exc:
+            print(f"failed: {exc}")
+            input("\n[enter to return]")
+        finally:
+            self.scr.refresh()
+            curses.reset_prog_mode()
+            self.refresh_status()
+
+    def do_details(self, tool: dict) -> None:
+        inst = self.installed.get(tool["id"])
+        lines = [
+            f"id       {tool['id']}",
+            f"category {tool['cat']}",
+            f"status   {'installed' if inst else 'missing'}",
+            f"binary   {tool.get('bin')}",
+            f"version  {kalitools.version_of(tool) if inst else '-'}",
+            f"install  {tool['kind']}: {tool['spec']}",
+            "",
+        ]
+        words, cur = tool["desc"].split(), ""
+        for wd in words:
+            if len(cur) + len(wd) > 66:
+                lines.append(cur)
+                cur = ""
+            cur += wd + " "
+        lines.append(cur)
+        if tool.get("alt"):
+            lines.append("")
+            lines.append(f"fallback {tool['alt']['kind']}: {tool['alt']['spec']}")
+        self.popup(tool["name"], lines)
+
+    def handle(self, ch: int) -> bool:
+        vis = self.visible()
+        if self.searching:
+            if ch == 27:
+                self.searching = False
+                self.search = ""
+                self.cursor = self.offset = 0
+            elif ch in (10, 13, curses.KEY_ENTER):
+                self.searching = False
+            elif ch in (curses.KEY_BACKSPACE, 127, 8):
+                self.search = self.search[:-1]
+                self.cursor = self.offset = 0
+            elif 32 <= ch < 127:
+                self.search += chr(ch)
+                self.cursor = self.offset = 0
+            return True
+
+        if ch in (ord("q"),):
+            return False
+        if ch in (curses.KEY_UP, ord("k")):
+            self.cursor -= 1
+        elif ch in (curses.KEY_DOWN, ord("j")):
+            self.cursor += 1
+        elif ch in (ord("g"), curses.KEY_HOME):
+            self.cursor = 0
+        elif ch in (ord("G"), curses.KEY_END):
+            self.cursor = max(0, len(vis) - 1)
+        elif ch in (curses.KEY_LEFT,):
+            self.search = ""
+            self.cat_idx = (self.cat_idx - 1) % len(self.cats)
+            self.cursor = self.offset = 0
+        elif ch in (curses.KEY_RIGHT, ord("\t")):
+            self.search = ""
+            self.cat_idx = (self.cat_idx + 1) % len(self.cats)
+            self.cursor = self.offset = 0
+        elif ch == ord("/"):
+            self.searching = True
+            self.msg = "search: "
+        elif ch == ord(" "):
+            cur = self.current()
+            if cur:
+                self.marks.symmetric_difference_update({cur["id"]})
+                self.cursor += 1
+        elif ch == ord("a"):
+            for t in vis:
+                if not self.installed.get(t["id"]):
+                    self.marks.add(t["id"])
+        elif ch == ord("u"):
+            self.marks.clear()
+        elif ch == ord("v"):
+            self.refresh_status()
+            self.msg = "status refreshed"
+        elif ch in (ord("i"), curses.KEY_ENTER, 10, 13):
+            if ch == ord("i"):
+                targets = [t for t in self.tools if t["id"] in self.marks] or (
+                    [self.current()] if self.current() else []
+                )
+                self.start_install([t for t in targets if t])
+            else:
+                cur = self.current()
+                if cur:
+                    self.do_details(cur)
+        elif ch == ord("r"):
+            cur = self.current()
+            if cur:
+                self.do_run(cur)
+        elif ch == ord("d"):
+            cur = self.current()
+            if cur:
+                self.do_details(cur)
+        # clamp
+        if vis:
+            self.cursor = max(0, min(self.cursor, len(vis) - 1))
+        return True
+
+    # ---------------- loop ----------------
+    def run(self) -> None:
+        curses.curs_set(0)
+        # timeout() rather than nodelay(): blocks up to 150 ms so an idle UI
+        # does not spin a core, while still letting install output animate.
+        self.scr.timeout(150)
+        self.scr.keypad(True)
+        curses.start_color()
+        curses.use_default_colors()
+        curses.init_pair(C_TITLE, curses.COLOR_BLACK, curses.COLOR_CYAN)
+        curses.init_pair(C_INST, curses.COLOR_GREEN, -1)
+        curses.init_pair(C_MISS, curses.COLOR_RED, -1)
+        curses.init_pair(C_SEL, curses.COLOR_BLACK, curses.COLOR_WHITE)
+        curses.init_pair(C_MARK, curses.COLOR_YELLOW, -1)
+        curses.init_pair(C_LOG, curses.COLOR_WHITE, -1)
+
+        alive = True
+        while alive:
+            self.pump()
+            self.draw()
+            try:
+                ch = self.scr.getch()
+            except curses.error:
+                ch = -1
+            if ch != -1:
+                alive = self.handle(ch)
+
+
+def main() -> int:
+    catalog = kalitools.load_catalog()
+    curses.wrapper(lambda scr: App(scr, catalog).run())
+    print("kali-tui closed. run `kalitools status` for a summary.")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        sys.exit(130)

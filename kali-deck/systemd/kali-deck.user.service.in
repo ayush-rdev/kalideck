@@ -1,0 +1,19 @@
+[Unit]
+Description=Kali Deck - web console for the kali-lab cyber range
+Documentation=file://__DIR__/README.md
+
+[Service]
+Type=simple
+WorkingDirectory=__DIR__
+Environment=NODE_ENV=production
+# Loopback only: publish via Tailscale or an SSH tunnel, never the LAN.
+Environment=DECK_HOST=127.0.0.1
+Environment=DECK_PORT=__PORT__
+ExecStart=__NODE__ __DIR__/server/index.js
+Restart=always
+RestartSec=2
+TimeoutStopSec=10
+KillMode=mixed
+
+[Install]
+WantedBy=default.target

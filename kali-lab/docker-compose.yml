@@ -1,0 +1,82 @@
+# kali-lab toolbox
+#
+# Replaces the ad-hoc `docker run --privileged --network host kali-saved`
+# invocation with something reproducible, and keeps the container name
+# `kali-lab` so the existing shell alias still works:
+#
+#     alias kali='docker exec -it -u hacker kali-lab /bin/zsh'
+#
+#   docker compose up -d
+#   docker exec -it -u hacker kali-lab /bin/zsh
+#   kali-tui                      # inside the container
+
+services:
+  kali-lab:
+    image: kali-toolbox:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kali-lab
+    hostname: kali-lab
+    restart: unless-stopped
+    # Host networking keeps scan results honest (no NAT rewriting source IPs).
+    network_mode: host
+    # Deliberately NOT --privileged. These three caps cover what the toolset
+    # actually needs: NET_RAW/NET_ADMIN for scanning, ARP and monitor-mode
+    # tooling, SYS_PTRACE for gdb on target binaries.
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - SYS_PTRACE
+    security_opt:
+      - no-new-privileges:false
+    # Loot, notes and downloaded wordlists survive container recreation.
+    volumes:
+      - kali-home:/home/hacker
+      - kali-root:/root
+      - kali-work:/work
+    working_dir: /work
+    command: ["sleep", "infinity"]
+
+  # Web terminal for the Homarr iframe widget: serves kali-tui over HTTP on
+  # 7681 (host network) with a fixed-size tmux session running as `hacker`.
+  # Credentials come from .env (TTYD_USER / TTYD_PASSWORD) next to this file.
+  # The image does not ship ttyd yet (added to the Dockerfile for the next
+  # build), so the container fetches the static binary on first start.
+  ttyd:
+    image: kali-toolbox:latest
+    container_name: kali-ttyd
+    hostname: kali-ttyd
+    restart: unless-stopped
+    network_mode: host
+    user: "0:0"
+    working_dir: /work
+    entrypoint:
+      - /bin/bash
+      - -lc
+      - |
+        set -e
+        if ! command -v ttyd >/dev/null 2>&1; then
+          echo "[ttyd-bootstrap] fetching static ttyd..."
+          curl -fsSL https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.x86_64 -o /usr/local/bin/ttyd
+          chmod 755 /usr/local/bin/ttyd
+        fi
+        tmux new-session -d -x 200 -y 50 -s tui \
+          'su - hacker -c kali-tui; exec bash' 2>/dev/null || true
+        exec ttyd -W -p 7681 -m 2000 \
+          -c "${TTYD_USER:-server}:${TTYD_PASSWORD:-changeme}" tmux attach -t tui
+    environment:
+      - TERM=xterm-256color
+      - TTYD_USER=${TTYD_USER:-server}
+      - TTYD_PASSWORD=${TTYD_PASSWORD:-changeme}
+    volumes:
+      - kali-home:/home/hacker
+      - kali-root:/root
+      - kali-work:/work
+    depends_on:
+      - kali-lab
+
+volumes:
+  kali-home:
+  kali-root:
+  kali-work:

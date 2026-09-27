@@ -1,0 +1,15 @@
+# The deck console lives in its own directory with its own package.json.
+kali-deck/node_modules/
+kali-deck/dist/
+
+# Runtime state and secrets - never commit.
+kali-deck/.env
+kali-lab/.env
+*.log
+
+# Python cruft from the lab tooling.
+__pycache__/
+*.pyc
+
+# OS / editor noise.
+.DS_Store

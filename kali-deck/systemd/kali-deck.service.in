@@ -1,0 +1,30 @@
+[Unit]
+Description=Kali Deck - web console for the kali-lab cyber range
+Documentation=file://__DIR__/README.md
+# The deck drives the lab container over the Docker API, so docker must be up.
+After=network-online.target docker.service docker.socket
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__GROUP__
+WorkingDirectory=__DIR__
+Environment=NODE_ENV=production
+# __HOST__ is chosen by deploy.sh via the DECK_HOST env var:
+#   127.0.0.1  (default) Tailscale `serve` terminates TLS and proxies to it
+#   0.0.0.0    direct LAN access on http://<server-ip>:8080
+Environment=DECK_HOST=__HOST__
+Environment=DECK_PORT=__PORT__
+ExecStart=__NODE__ __DIR__/server/index.js
+Restart=always
+RestartSec=2
+# Sessions live in memory, so a restart just asks you to log in again.
+TimeoutStopSec=10
+KillMode=mixed
+
+# NOTE: NoNewPrivileges is intentionally NOT set - the Privacy page calls
+# `sudo -n protonvpn ...`, which is blocked when no-new-privs is on.
+
+[Install]
+WantedBy=multi-user.target
